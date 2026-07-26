@@ -1,0 +1,61 @@
+// DAX measures for a "Forecast Accuracy" tracking page in Power BI.
+// Assumes a table `ForecastLog` with columns:
+//   [PeriodDate], [ModelName], [ActualValue], [ForecastValue]
+// populated by the same backtest logic in forecast_backtest.py, logged to
+// SQL/Snowflake at the end of each monthly run (see "How to operationalize"
+// in the README).
+
+Absolute Error =
+SUMX(
+    ForecastLog,
+    ABS(ForecastLog[ActualValue] - ForecastLog[ForecastValue])
+)
+
+MAPE =
+AVERAGEX(
+    ForecastLog,
+    DIVIDE(
+        ABS(ForecastLog[ActualValue] - ForecastLog[ForecastValue]),
+        ForecastLog[ActualValue]
+    )
+)
+
+WAPE =
+DIVIDE(
+    [Absolute Error],
+    SUM(ForecastLog[ActualValue])
+)
+
+WAPE (Prior 3 Months) =
+CALCULATE(
+    [WAPE],
+    DATESINPERIOD(
+        'Date'[Date],
+        MAX('Date'[Date]),
+        -3,
+        MONTH
+    )
+)
+
+Forecast Accuracy Flag =
+VAR CurrentWAPE = [WAPE]
+RETURN
+    SWITCH(
+        TRUE(),
+        CurrentWAPE > 0.15, "Red - investigate model",
+        CurrentWAPE > 0.08, "Yellow - monitor",
+        "Green - within tolerance"
+    )
+
+Best Model This Period =
+VAR RankedModels =
+    ADDCOLUMNS(
+        SUMMARIZE(ForecastLog, ForecastLog[ModelName]),
+        "@ModelWAPE",
+        CALCULATE([WAPE])
+    )
+RETURN
+    MINX(
+        TOPN(1, RankedModels, [@ModelWAPE], ASC),
+        ForecastLog[ModelName]
+    )
